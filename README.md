@@ -1,18 +1,28 @@
-# Plumber Uber
+# Pipego
 
-An on-demand plumbing marketplace, built incrementally around a server-authoritative API. The first implementation stage establishes identity, role enforcement, and the data-model boundaries; later stages add provider onboarding, dispatch, bookings, payments, and clients.
+Pipego is an on-demand plumbing marketplace organized as one repository with separate frontend apps and a backend API. The web and mobile frontends call the same API; the backend owns authentication, authorization, profile and booking data, and provider dispatch.
 
-## Architecture
+## Frontend and backend
+
+| Part | Repository folder | Technology | Purpose / deployment |
+| --- | --- | --- | --- |
+| Web frontend | `apps/web` | Next.js, React | Browser experience; deploy to Vercel. |
+| Mobile frontend | `apps/mobile` | Expo, React Native | Android and iOS app; build Android packages with EAS. |
+| Backend | `services/api` | FastAPI, SQLAlchemy, Alembic | Shared REST API; deploy to Railway. |
 
 ```text
-apps/web        Next.js App Router customer, provider, company, and admin web experiences
-apps/mobile     Expo Router customer and provider mobile experiences
-services/api    FastAPI REST API, WebSockets, authorization, domain services, and provider adapters
-services/worker Background work for offer expiry, notifications, and eligible payouts
-infra           Deployment and local infrastructure configuration
+pipego/
+├── apps/
+│   ├── web/          # Frontend: Next.js website and server-side API proxy
+│   └── mobile/       # Frontend: Expo / React Native app
+├── services/
+│   └── api/          # Backend: FastAPI, database models, migrations, and tests
+└── README.md
 ```
 
-The API is the authority for authentication, resource access, dispatch selection, booking state transitions, payment confirmation, and settlement eligibility. PostgreSQL is the durable source of truth. WebSockets and push notifications deliver events but cannot assign work or authorize actions. External map, messaging, and payment integrations are behind replaceable interfaces. Production database access uses Neon PostgreSQL; local tests use isolated SQLite databases.
+For local development, start the API backend first, then run either frontend in a separate terminal. Set each frontend's API URL to the backend address: `API_BASE_URL` for the web app and `EXPO_PUBLIC_API_BASE_URL` for mobile. For deployment, Railway hosts the API, Vercel hosts the web app, and EAS builds the mobile app. These are separate deployments connected by the API's HTTPS URL.
+
+The API is authoritative for authentication, resource access, dispatch selection, booking state transitions, payment confirmation, and settlement eligibility. PostgreSQL is the production source of truth; local tests use isolated SQLite databases. External map, messaging, and payment integrations are behind replaceable interfaces.
 
 ### Core schema
 
@@ -38,49 +48,58 @@ Normal path: `REQUESTED -> SEARCHING -> OFFERED -> ACCEPTED -> EN_ROUTE -> ARRIV
 
 Customer authorization/collection, provider earnings, and provider payout are separate records and state machines. Only a verified provider webhook (or a server-side provider status query where supported), checked for signature and idempotency, can confirm payment. Provider verification can alter the configured deposit or milestone policy; it never guarantees immediate transfer. Payout eligibility requires the applicable completion evidence, customer confirmation, reconciliation, and dispute checks. No escrow claim is made: settlement uses only payment-provider capabilities approved for the merchant account and jurisdiction.
 
-## Stage 1: local API
+## Run locally
+
+### 1. Start the backend API
 
 Requirements: Python 3.11+.
 
+From the repository root in PowerShell:
+
 ```powershell
-cd services/api
+Set-Location services/api
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -e ".[test]"
-uvicorn app.main:app --reload
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-The API uses SQLite by default for local development. For a local PostgreSQL connection, put `DATABASE_URL` in `services/api/.env` (this ignored file is loaded automatically) or set it in the process environment; plain `postgresql://` URLs use the installed psycopg 3 driver. Set `SECRET_KEY` to a strong random secret outside local development. Apply schema migrations from `services/api` with `alembic upgrade head`; production startup does not create tables. Interactive API documentation is available at `/docs`. Public registration creates customer accounts only; provider, company, and administrator privileges are not self-selected.
+The API listens at `http://127.0.0.1:8000`; interactive documentation is at `http://127.0.0.1:8000/docs`. It uses SQLite by default for local development. For a local PostgreSQL connection, put `DATABASE_URL` in `services/api/.env` (this ignored file is loaded automatically) or set it in the process environment. Set `SECRET_KEY` to a strong random secret outside local development. Apply schema migrations from `services/api` with `alembic upgrade head`; production startup does not create tables. Public registration creates customer accounts only; provider, company, and administrator privileges are not self-selected.
 
-Run the focused API tests from `services/api` with `python -m pytest`.
+Run the API tests from `services/api` with `python -m pytest`.
 
 Payment initiation currently uses a development-only mock adapter. A payment remains pending until `POST /api/v1/payments/webhooks/mock` receives a valid HMAC-SHA256 signature in `X-Payment-Signature`; frontend redirects never mark it paid. Set `PAYMENT_WEBHOOK_SECRET` to a random secret of at least 32 characters in production. The mock adapter is disabled in production until a real provider adapter is configured. Confirmed customer funds remain separate from provider earnings; completion creates a held earning and commission ledger entry, with no automatic transfer or escrow claim.
 
-## Stage 2: customer web booking
+### 2. Start the web frontend
 
-Start the API as described above, then run the web app from `apps/web`:
+In a second PowerShell terminal, from the repository root:
 
 ```powershell
-cd apps/web
+Set-Location apps/web
 Copy-Item .env.example .env.local
+npm ci
 npm run dev
 ```
 
-The web app is available at `http://localhost:3000`. After sign-up or sign-in, customers and plumbers land on their profile dashboard. Customers can edit their name, bio, and photo; plumbers can add their legal name, bio, photo, service county and area, services, and experience. Plumbers activate when their required profile details are complete; ID upload is not required. Both account types can share photo posts. Profile photos and posts are limited to JPEG, PNG, or WebP images up to 4 MB. Apply the Alembic migrations before deploying profile changes. The web app proxies API requests server-side and stores the short-lived bearer token in an HttpOnly, SameSite cookie; it does not expose the token to browser JavaScript. Set `API_BASE_URL` in `apps/web/.env.local` when the API is not listening at `http://127.0.0.1:8000`.
+The web frontend is available at `http://localhost:3000`. The example file points `API_BASE_URL` at the local API. The web app proxies API requests server-side and stores the short-lived bearer token in an HttpOnly, SameSite cookie; it does not expose the token to browser JavaScript.
 
-## Stage 3: Expo mobile app
+### 3. Start the mobile frontend
 
-From `apps/mobile`, install the dependencies and start Expo:
+In another terminal, from the repository root:
 
 ```powershell
-cd apps/mobile
+Set-Location apps/mobile
 Copy-Item .env.example .env.local
-# Set EXPO_PUBLIC_API_BASE_URL in .env.local to your computer's LAN address.
-npm install
+npm ci
+```
+
+Set `EXPO_PUBLIC_API_BASE_URL` in `apps/mobile/.env.local` to the backend address reachable from your device, then start Expo:
+
+```powershell
 npx expo start
 ```
 
-Set `EXPO_PUBLIC_API_BASE_URL` to an API address reachable from the device before starting Expo. Use the computer's LAN address for a physical device; `127.0.0.1` refers to the device itself. The mobile app includes the Pipego homepage, customer/plumber dashboard views, customer and plumber profile editing, image posts, location-based plumbing requests, request status refresh, plumber application, provider availability, and job offer acceptance. The admin dashboard is a clearly labelled sample-data preview, not live analytics. Sign-in tokens are stored in Expo SecureStore. Foreground location permission is requested only when sharing a customer location or going online as a provider.
+Use the computer's LAN IP address for a physical Android phone on the same Wi-Fi; `127.0.0.1` on the phone refers to the phone itself. For the Android emulator, use `http://10.0.2.2:8000`. A custom development APK is required for Pipego's native Google Maps configuration; see [Android development build and APK](#android-development-build-and-apk). Sign-in tokens are stored in Expo SecureStore. Foreground location permission is requested only when sharing a customer location or going online as a provider.
 
 ## Production deployment
 
