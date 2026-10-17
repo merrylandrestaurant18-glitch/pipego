@@ -1,0 +1,96 @@
+.download-page {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(ellipse at 82% 12%, rgba(198, 227, 107, 0.2), transparent 34%),
+    #f0f3eb;
+  color: #18332e;
+}
+
+.download-card {
+  width: min(100%, 520px);
+  padding: clamp(28px, 7vw, 52px);
+  border: 1px solid #e1e8dc;
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(24, 51, 46, 0.1);
+}
+
+.download-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #53625d;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.download-icon {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  margin-top: 42px;
+  place-items: center;
+  border-radius: 18px;
+  background: #eaf1e2;
+  color: #235b4b;
+}
+
+.download-eyebrow {
+  margin: 24px 0 12px;
+  color: #668176;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+}
+
+.download-card h1 {
+  margin: 0;
+  font-size: clamp(34px, 7vw, 48px);
+  letter-spacing: -2px;
+  line-height: 1.08;
+}
+
+.download-description {
+  margin: 18px 0 28px;
+  color: #65736d;
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.download-button {
+  display: flex;
+  min-height: 54px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-radius: 10px;
+  background: #235b4b;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 750;
+}
+
+.download-button:hover {
+  background: #174638;
+}
+
+.download-unavailable {
+  margin: 0;
+  padding: 15px;
+  border: 1px solid #e1e8dc;
+  border-radius: 10px;
+  background: #f8faf6;
+  color: #53625d;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.download-note {
+  margin: 18px 0 0;
+  color: #7a8781;
+  font-size: 12px;
+  line-height: 1.6;
+}

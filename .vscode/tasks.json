@@ -1,0 +1,39 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run Pipego mobile web",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"--prefix",
+				"apps/mobile",
+				"run",
+				"web",
+				"--",
+				"--port",
+				"8081"
+			],
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Run Pipego mobile web on 8082",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"--prefix",
+				"apps/mobile",
+				"run",
+				"web",
+				"--",
+				"--port",
+				"8082"
+			],
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		}
+	]
+}

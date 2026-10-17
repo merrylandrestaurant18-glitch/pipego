@@ -1,0 +1,52 @@
+{
+  "expo": {
+    "name": "Pipego",
+    "slug": "pipego",
+    "owner": "pipego",
+    "scheme": "pipego",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Share your location to find nearby plumbers or receive nearby job offers.",
+          "locationAlwaysAndWhenInUsePermission": "Allow Pipego to share your location while you are online so customers can track you during an active job.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true,
+          "isIosBackgroundLocationEnabled": true
+        }
+      ],
+      "expo-secure-store"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.pipego.mobile",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "location"
+        ]
+      }
+    },
+    "android": {
+      "package": "com.pipego.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#235B4B",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "cfc065df-afdb-43c2-8c5e-dc2c85bfbe76"
+      }
+    }
+  }
+}
