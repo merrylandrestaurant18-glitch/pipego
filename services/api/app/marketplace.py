@@ -6,6 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -82,43 +83,46 @@ def create_marketplace_router(
     ) -> list[NearbyPlumberResponse]:
         fresh_after = datetime.now(timezone.utc) - timedelta(minutes=2)
         if session.get_bind().dialect.name == "postgresql":
-            rows = session.execute(
-                text(
-                    """
-                    SELECT u.id,
-                           p.display_name AS name,
-                           0.0::double precision AS rating,
-                           a.latitude,
-                           a.longitude,
-                           p.profile_image_data,
-                           p.bio,
-                           p.service_location,
-                           p.service_county,
-                           p.years_experience,
-                           ST_Distance(
-                               ST_SetSRID(ST_MakePoint(a.longitude, a.latitude), 4326)::geography,
-                               ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography
-                           ) AS meters
-                    FROM users AS u
-                    JOIN plumber_profiles AS p ON p.user_id = u.id
-                    JOIN provider_availability AS a ON a.user_id = u.id
-                    WHERE u.is_active IS TRUE
-                      AND p.verification_status = 'verified'
-                      AND a.is_online IS TRUE
-                      AND a.updated_at > :fresh_after
-                      AND a.latitude IS NOT NULL
-                      AND a.longitude IS NOT NULL
-                      AND ST_DWithin(
-                          ST_SetSRID(ST_MakePoint(a.longitude, a.latitude), 4326)::geography,
-                          ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography,
-                          :radius
-                      )
-                    ORDER BY meters ASC
-                    LIMIT 20
-                    """
-                ),
-                {"lat": lat, "lng": lng, "radius": radius, "fresh_after": fresh_after},
-            ).mappings()
+            statement = text(
+                """
+                SELECT u.id,
+                       p.display_name AS name,
+                       0.0::double precision AS rating,
+                       a.latitude,
+                       a.longitude,
+                       p.profile_image_data,
+                       p.bio,
+                       p.service_location,
+                       p.service_county,
+                       p.years_experience,
+                       ST_Distance(
+                           ST_SetSRID(ST_MakePoint(a.longitude, a.latitude), 4326)::geography,
+                           ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography
+                       ) AS meters
+                FROM users AS u
+                JOIN plumber_profiles AS p ON p.user_id = u.id
+                JOIN provider_availability AS a ON a.user_id = u.id
+                WHERE u.is_active IS TRUE
+                  AND p.verification_status = 'verified'
+                  AND a.is_online IS TRUE
+                  AND a.updated_at > :fresh_after
+                  AND a.latitude IS NOT NULL
+                  AND a.longitude IS NOT NULL
+                  AND ST_DWithin(
+                      ST_SetSRID(ST_MakePoint(a.longitude, a.latitude), 4326)::geography,
+                      ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography,
+                      :radius
+                  )
+                ORDER BY meters ASC
+                LIMIT 20
+                """
+            )
+            parameters = {"lat": lat, "lng": lng, "radius": radius, "fresh_after": fresh_after}
+            try:
+                rows = session.execute(statement, parameters).mappings().all()
+            except OperationalError:
+                session.rollback()
+                rows = session.execute(statement, parameters).mappings().all()
             return [
                 NearbyPlumberResponse(
                     id=row["id"],
