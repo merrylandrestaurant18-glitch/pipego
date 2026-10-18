@@ -17,4 +17,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Leave the shared PostGIS extension installed for other database users."""
     pass
