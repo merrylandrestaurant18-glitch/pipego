@@ -109,11 +109,13 @@ The web app is a Next.js frontend for Vercel, the API is a FastAPI service for R
 
 Create a Railway service with its root directory set to `services/api`. The included `railway.toml` runs Alembic migrations before each deployment, starts Uvicorn on Railway's assigned port, and checks `/health`. Add a Railway PostgreSQL service and configure these variables on the API service:
 
-- `DATABASE_URL`: Railway PostgreSQL connection URL.
+- `DATABASE_URL`: reference the PostgreSQL service URL, for example `${{Postgres.DATABASE_URL}}` (change `Postgres` if your Railway database service has a different name).
 - `ENVIRONMENT`: `production`.
 - `SECRET_KEY`: a randomly generated secret of at least 32 characters.
 - `PAYMENT_WEBHOOK_SECRET`: a randomly generated secret of at least 32 characters.
 - `CORS_ORIGINS`: the exact production Vercel site origin, such as `https://your-site.vercel.app` (no trailing slash). Add any other trusted web origins as comma-separated values.
+
+The copyable variable template is [`services/api/.env.railway.example`](services/api/.env.railway.example). It contains placeholders only: add the variables individually in Railway under the API service's **Variables** settings, replace the database service name and Vercel domain with your actual values, and generate two different random secrets. For example, generate a secret locally with `python -c "import secrets; print(secrets.token_urlsafe(48))"` and paste the output directly into Railway; do not commit generated secrets or upload a local `.env` file. `ACCESS_TOKEN_MINUTES`, `PLATFORM_COMMISSION_BPS`, and `DISPATCH_RADIUS_KM` are optional and shown with their current defaults. Railway supplies `PORT` automatically.
 
 After deployment, confirm `https://<your-railway-domain>/health` returns `{"status":"ok"}`. The migrations must complete successfully before the API starts serving traffic.
 
