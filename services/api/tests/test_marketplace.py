@@ -4,10 +4,11 @@ import json
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
+from sqlalchemy import select
 from fastapi.testclient import TestClient
 
 from app.main import create_app
-from app.models import PlumberProfile, ProviderAvailability, User
+from app.models import BookingOffer, PlumberProfile, ProviderAvailability, User
 from app.security import hash_password
 
 
@@ -107,6 +108,146 @@ def test_provider_discovery_only_returns_available_verified_public_profiles() ->
         assert "longitude" not in provider
 
         assert client.get("/api/v1/providers/discover?latitude=-1.287").status_code == 422
+
+
+def test_nearby_plumbers_returns_only_fresh_verified_online_results_by_distance() -> None:
+    app = create_app("sqlite://", "a-nearby-test-secret-key-with-more-than-32-bytes", create_schema=True)
+    now = datetime.now(timezone.utc)
+    with TestClient(app) as client:
+        with app.state.session_factory() as session:
+            providers = [
+                ("near@example.com", "Nearby Plumber", True, "verified", now),
+                ("far@example.com", "Far Plumber", True, "verified", now),
+                ("stale@example.com", "Stale Plumber", True, "verified", now - timedelta(minutes=3)),
+                ("offline@example.com", "Offline Plumber", False, "verified", now),
+                ("pending@example.com", "Pending Plumber", True, "pending", now),
+            ]
+            for email, name, is_online, verification, updated_at in providers:
+                user = User(
+                    email=email,
+                    password_hash=hash_password("a-strong-provider-password"),
+                    role="plumber",
+                )
+                session.add(user)
+                session.flush()
+                session.add(
+                    PlumberProfile(
+                        user_id=user.id,
+                        display_name=name,
+                        verification_status=verification,
+                        profile_image_data="data:image/png;base64,dGVzdA==" if email == "near@example.com" else None,
+                        phone_number="+254712345678" if email == "near@example.com" else None,
+                    )
+                )
+                session.add(
+                    ProviderAvailability(
+                        user_id=user.id,
+                        is_online=is_online,
+                        latitude=-1.2864,
+                        longitude=36.8172 if email != "far@example.com" else 37.0,
+                        service_radius_km=20,
+                        max_active_jobs=1,
+                        updated_at=updated_at,
+                    )
+                )
+            session.commit()
+
+        response = client.get("/api/v1/plumbers/nearby?lat=-1.2864&lng=36.8172&radius=5000")
+
+    assert response.status_code == 200
+    plumbers = response.json()
+    assert len(plumbers) == 1
+    assert plumbers[0]["name"] == "Nearby Plumber"
+    assert plumbers[0]["latitude"] == -1.2864
+    assert plumbers[0]["longitude"] == 36.8172
+    assert plumbers[0]["meters"] == 0
+    assert isinstance(plumbers[0]["rating"], (int, float))
+    assert plumbers[0]["profile_image_data"] == "data:image/png;base64,dGVzdA=="
+    assert "phone_number" not in plumbers[0]
+
+
+def test_booking_request_targets_the_selected_online_plumber() -> None:
+    app = create_app("sqlite://", "a-targeted-booking-test-secret-key-long-enough", create_schema=True)
+    with TestClient(app) as client:
+        with app.state.session_factory() as session:
+            customer = User(
+                email="target-customer@example.com",
+                password_hash=hash_password("a-strong-customer-password"),
+                role="customer",
+            )
+            selected = User(
+                email="selected-plumber@example.com",
+                password_hash=hash_password("a-strong-provider-password"),
+                role="plumber",
+            )
+            other = User(
+                email="other-plumber@example.com",
+                password_hash=hash_password("a-strong-provider-password"),
+                role="plumber",
+            )
+            session.add_all([customer, selected, other])
+            session.flush()
+            session.add_all(
+                [
+                    PlumberProfile(user_id=selected.id, display_name="Selected Plumber", verification_status="verified"),
+                    PlumberProfile(user_id=other.id, display_name="Other Plumber", verification_status="verified"),
+                    ProviderAvailability(
+                        user_id=selected.id,
+                        is_online=True,
+                        latitude=-1.2864,
+                        longitude=36.8172,
+                        service_radius_km=20,
+                        max_active_jobs=1,
+                    ),
+                    ProviderAvailability(
+                        user_id=other.id,
+                        is_online=True,
+                        latitude=-1.2865,
+                        longitude=36.8173,
+                        service_radius_km=20,
+                        max_active_jobs=1,
+                    ),
+                ]
+            )
+            selected_id = selected.id
+            session.commit()
+
+        customer_headers = login(client, "target-customer@example.com", "a-strong-customer-password")
+        booking = client.post(
+            "/api/v1/bookings",
+            headers=customer_headers,
+            json={
+                "category": "Leaking pipe",
+                "description": "Water is leaking under the kitchen sink.",
+                "latitude": -1.2864,
+                "longitude": 36.8172,
+                "provider_id": str(selected_id),
+            },
+        )
+        assert booking.status_code == 201
+        assert booking.json()["status"] == "offered"
+        with app.state.session_factory() as session:
+            offer = session.scalar(select(BookingOffer).where(BookingOffer.booking_id == UUID(booking.json()["id"])))
+            assert offer is not None
+            assert offer.provider_id == selected_id
+            selected_availability = session.get(ProviderAvailability, selected_id)
+            assert selected_availability is not None
+            selected_availability.updated_at = datetime.now(timezone.utc) - timedelta(minutes=3)
+            session.commit()
+
+        unavailable_request = client.post(
+            "/api/v1/bookings",
+            headers=customer_headers,
+            json={
+                "category": "Leaking pipe",
+                "description": "Water is leaking under the kitchen sink.",
+                "latitude": -1.2864,
+                "longitude": 36.8172,
+                "provider_id": str(selected_id),
+            },
+        )
+        assert unavailable_request.status_code == 201
+        assert unavailable_request.json()["status"] == "no_provider_found"
 
 
 def test_verified_provider_booking_quote_and_customer_confirmation() -> None:

@@ -5,7 +5,7 @@ from typing import Annotated, Callable
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -32,6 +32,7 @@ from app.schemas import (
     ProviderApplicationRequest,
     ProviderDiscoveryResponse,
     ProviderVerificationRequest,
+    NearbyPlumberResponse,
     QuoteCreateRequest,
     QuoteResponse,
 )
@@ -71,6 +72,104 @@ def create_marketplace_router(
     require_roles: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v1")
+
+    @router.get("/plumbers/nearby", response_model=list[NearbyPlumberResponse])
+    def nearby_plumbers(
+        session: Annotated[Session, Depends(get_session)],
+        lat: Annotated[float, Query(ge=-90, le=90)],
+        lng: Annotated[float, Query(ge=-180, le=180)],
+        radius: Annotated[float, Query(ge=1, le=50_000)] = 5_000,
+    ) -> list[NearbyPlumberResponse]:
+        fresh_after = datetime.now(timezone.utc) - timedelta(minutes=2)
+        if session.get_bind().dialect.name == "postgresql":
+            rows = session.execute(
+                text(
+                    """
+                    SELECT u.id,
+                           p.display_name AS name,
+                           0.0::double precision AS rating,
+                           a.latitude,
+                           a.longitude,
+                           p.profile_image_data,
+                           p.bio,
+                           p.service_location,
+                           p.service_county,
+                           p.years_experience,
+                           ST_Distance(
+                               ST_SetSRID(ST_MakePoint(a.longitude, a.latitude), 4326)::geography,
+                               ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography
+                           ) AS meters
+                    FROM users AS u
+                    JOIN plumber_profiles AS p ON p.user_id = u.id
+                    JOIN provider_availability AS a ON a.user_id = u.id
+                    WHERE u.is_active IS TRUE
+                      AND p.verification_status = 'verified'
+                      AND a.is_online IS TRUE
+                      AND a.updated_at > :fresh_after
+                      AND a.latitude IS NOT NULL
+                      AND a.longitude IS NOT NULL
+                      AND ST_DWithin(
+                          ST_SetSRID(ST_MakePoint(a.longitude, a.latitude), 4326)::geography,
+                          ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography,
+                          :radius
+                      )
+                    ORDER BY meters ASC
+                    LIMIT 20
+                    """
+                ),
+                {"lat": lat, "lng": lng, "radius": radius, "fresh_after": fresh_after},
+            ).mappings()
+            return [
+                NearbyPlumberResponse(
+                    id=row["id"],
+                    name=row["name"],
+                    rating=row["rating"],
+                    latitude=row["latitude"],
+                    longitude=row["longitude"],
+                    meters=row["meters"],
+                    profile_image_data=row["profile_image_data"],
+                    bio=row["bio"],
+                    service_location=row["service_location"],
+                    service_county=row["service_county"],
+                    years_experience=row["years_experience"],
+                )
+                for row in rows
+            ]
+
+        providers = session.execute(
+            select(User, PlumberProfile, ProviderAvailability)
+            .join(PlumberProfile, PlumberProfile.user_id == User.id)
+            .join(ProviderAvailability, ProviderAvailability.user_id == User.id)
+            .where(
+                User.is_active.is_(True),
+                PlumberProfile.verification_status == "verified",
+                ProviderAvailability.is_online.is_(True),
+                ProviderAvailability.updated_at > fresh_after,
+                ProviderAvailability.latitude.is_not(None),
+                ProviderAvailability.longitude.is_not(None),
+            )
+        ).all()
+        nearby: list[NearbyPlumberResponse] = []
+        for user, profile, availability in providers:
+            meters = distance_km(lat, lng, availability.latitude, availability.longitude) * 1000
+            if meters <= radius:
+                nearby.append(
+                    NearbyPlumberResponse(
+                        id=user.id,
+                        name=profile.display_name,
+                        rating=0.0,
+                        latitude=availability.latitude,
+                        longitude=availability.longitude,
+                        meters=meters,
+                        profile_image_data=profile.profile_image_data,
+                        bio=profile.bio,
+                        service_location=profile.service_location,
+                        service_county=profile.service_county,
+                        years_experience=profile.years_experience,
+                    )
+                )
+        nearby.sort(key=lambda plumber: plumber.meters)
+        return nearby[:20]
 
     @router.get("/providers/discover", response_model=list[ProviderDiscoveryResponse])
     def discover_providers(
@@ -175,12 +274,17 @@ def create_marketplace_router(
             created_at=booking.created_at,
         )
 
-    def dispatch(session: Session, booking: Booking, actor: User) -> None:
+    def dispatch(
+        session: Session,
+        booking: Booking,
+        actor: User,
+        requested_provider_id: UUID | None = None,
+    ) -> None:
         record_status(session, booking, "searching", actor, "system")
         latitude_delta = SEARCH_RADIUS_KM / 110.574
         cosine = max(abs(math.cos(math.radians(booking.latitude))), 0.01)
         longitude_delta = min(180.0, SEARCH_RADIUS_KM / (111.320 * cosine))
-        candidates = session.execute(
+        candidate_query = (
             select(ProviderAvailability, PlumberProfile)
             .join(PlumberProfile, PlumberProfile.user_id == ProviderAvailability.user_id)
             .where(
@@ -195,7 +299,14 @@ def create_marketplace_router(
                 ),
                 PlumberProfile.verification_status == "verified",
             )
-        ).all()
+        )
+        if requested_provider_id is not None:
+            candidate_query = candidate_query.join(User, User.id == ProviderAvailability.user_id).where(
+                User.is_active.is_(True),
+                ProviderAvailability.user_id == requested_provider_id,
+                ProviderAvailability.updated_at > datetime.now(timezone.utc) - timedelta(minutes=2),
+            )
+        candidates = session.execute(candidate_query).all()
 
         ranked: list[tuple[float, ProviderAvailability]] = []
         for availability, _ in candidates:
@@ -389,7 +500,7 @@ def create_marketplace_router(
         session.add(booking)
         session.flush()
         record_status(session, booking, "requested", user, "customer")
-        dispatch(session, booking, user)
+        dispatch(session, booking, user, payload.provider_id)
         session.commit()
         session.refresh(booking)
         return booking_response(session, booking)

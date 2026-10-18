@@ -66,6 +66,20 @@ class ProviderDiscoveryResponse(BaseModel):
     approximate_longitude: float
 
 
+class NearbyPlumberResponse(BaseModel):
+    id: UUID
+    name: str
+    rating: float
+    latitude: float
+    longitude: float
+    meters: float
+    profile_image_data: str | None = None
+    bio: str | None = None
+    service_location: str | None = None
+    service_county: str | None = None
+    years_experience: int | None = None
+
+
 class ProviderLocationResponse(BaseModel):
     latitude: float | None
     longitude: float | None
@@ -193,6 +207,7 @@ class BookingCreateRequest(BaseModel):
     description: str = Field(min_length=10, max_length=2000)
     latitude: float = Field(ge=-90, le=90)
     longitude: float = Field(ge=-180, le=180)
+    provider_id: UUID | None = None
 
 
 class BookingResponse(BaseModel):
